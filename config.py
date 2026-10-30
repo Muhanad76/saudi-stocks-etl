@@ -27,7 +27,11 @@ INDEX_TICKER = None
 INDEX_INFO = ("TASI Index", "مؤشر السوق الرئيسي تاسي", "Index")
 
 # --- Extraction settings ---
-PERIOD_YEARS = 5   # history length for the first full load
+# Fixed start of the history (first full load and every --full reload).
+# All eight stocks have data from 19 Dec 2021 (ACWA Power listed last), so a
+# fixed 2022 start gives every stock the same period and makes results
+# reproducible. The end is always the latest available trading day.
+START_DATE = "2022-01-01"
 INTERVAL = "1d"    # daily bars
 # Adjusted prices include dividends and bonus shares, so returns are accurate.
 AUTO_ADJUST = True
@@ -47,7 +51,9 @@ VOLATILITY_WINDOW = 30
 # the whole stored period is treated as bad data and stored as NULL. The
 # full-period median is used (not a rolling one) because the bad stretch is
 # longer than any reasonable rolling window and would contaminate it.
-VOLUME_ANOMALY_RATIO = 0.02
+# 5% was chosen after testing: 2% and 5% flag the same days, all inside
+# Mar-Jun 2023; 10% also flags ordinary quiet days outside that window.
+VOLUME_ANOMALY_RATIO = 0.05
 
 # --- Database ---
 # Connection credentials live in .env (see .env.example), never in code.

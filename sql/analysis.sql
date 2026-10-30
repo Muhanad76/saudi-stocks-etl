@@ -8,8 +8,8 @@ USE saudi_stocks;
 
 -- ---------------------------------------------------------------------
 -- Q1. Total return per stock over the full stored period.
--- Compares the first and last close of each ticker. Note: ACWA Power
--- (2082.SR) data starts later than the others, see Q1b for a fair view.
+-- Compares the first and last close of each ticker. With the fixed
+-- START_DATE (2022-01-01) every stock covers the same period.
 -- ---------------------------------------------------------------------
 WITH bounds AS (
     SELECT ticker, MIN(date) AS first_date, MAX(date) AS last_date
@@ -32,6 +32,8 @@ ORDER BY total_return_pct DESC;
 -- ---------------------------------------------------------------------
 -- Q1b. Total return over the COMMON window (all stocks start on the same
 -- day: the latest first date among them). Use this to rank stocks fairly.
+-- Currently identical to Q1; it guards the ranking if a stock with a
+-- shorter history is added later.
 -- ---------------------------------------------------------------------
 WITH common_start AS (
     SELECT MAX(first_date) AS start_date
@@ -117,20 +119,24 @@ JOIN companies c ON c.ticker = r.ticker
 WHERE best_rank = 1 OR worst_rank = 1
 ORDER BY total_return_pct DESC;
 
--- Best and worst calendar year for each stock (full years only).
+-- Best and worst calendar year for each stock (same annual returns as Q2:
+-- the first year is measured from its first close).
 WITH year_bounds AS (
     SELECT ticker, YEAR(date) AS yr, MIN(date) AS first_date, MAX(date) AS last_date
     FROM daily_prices
     GROUP BY ticker, YEAR(date)
 ),
 year_close AS (
-    SELECT yb.ticker, yb.yr, pl.close AS year_end_close
+    SELECT yb.ticker, yb.yr, pf.close AS first_close, pl.close AS year_end_close
     FROM year_bounds yb
+    JOIN daily_prices pf ON pf.ticker = yb.ticker AND pf.date = yb.first_date
     JOIN daily_prices pl ON pl.ticker = yb.ticker AND pl.date = yb.last_date
 ),
 annual AS (
     SELECT ticker, yr,
-           year_end_close / LAG(year_end_close) OVER (PARTITION BY ticker ORDER BY yr) - 1 AS ret
+           year_end_close
+           / COALESCE(LAG(year_end_close) OVER (PARTITION BY ticker ORDER BY yr), first_close)
+           - 1 AS ret
     FROM year_close
 )
 SELECT ticker,

@@ -2,7 +2,7 @@
 
 Usage:
     python pipeline.py              # incremental run (full load on first run)
-    python pipeline.py --full       # force a full 5-year reload of every ticker
+    python pipeline.py --full       # force a full reload from START_DATE
     python pipeline.py --skip-load  # extract + transform only, no database needed
 """
 

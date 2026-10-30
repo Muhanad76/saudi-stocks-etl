@@ -2,7 +2,7 @@
 
 **English** | [العربية](README.ar.md)
 
-An end-to-end data pipeline that extracts five years of daily prices for eight
+An end-to-end data pipeline that extracts daily prices since January 2022 for eight
 large Saudi Exchange (Tadawul) companies, cleans them and computes return and
 risk metrics with Pandas, loads them into MySQL, and serves them to a Power BI
 dashboard.
@@ -42,6 +42,19 @@ flowchart LR
 - Rolling metrics need history before the new days, so incremental runs read
   the ticker's stored prices from MySQL and compute metrics over the full series.
 - A daily bar for the current day is skipped until the market has closed.
+
+### Price adjustment and period
+
+- **Prices are adjusted for dividends and bonus shares.** yfinance is called
+  with `auto_adjust=True` (`AUTO_ADJUST` in `config.py`), so `Close` is the
+  adjusted close and there is no separate `Adj Close` column. Example: Al Rajhi
+  on 2 Nov 2021 is stored as 52.37 (adjusted); the traded price was 59.00.
+  Returns therefore include dividends (total return).
+- **The period has a fixed start.** History starts on `START_DATE`
+  (2022-01-01, first trading day 2 Jan 2022) and ends on the latest available
+  trading day. All eight stocks have data from 19 Dec 2021, so every stock
+  covers the same period, and a `--full` reload reproduces the same history
+  instead of shifting the start date.
 
 ## Stocks covered
 
@@ -138,7 +151,7 @@ saudi-stocks-etl/
    ```
 4. **Run the pipeline**
    ```bash
-   python pipeline.py              # first run = full 5-year load, later runs = incremental
+   python pipeline.py              # first run = full load from START_DATE, later runs = incremental
    python pipeline.py --full       # force a full reload
    python pipeline.py --skip-load  # extract + transform only (no database)
    ```
@@ -148,25 +161,39 @@ saudi-stocks-etl/
 
 ## Key insights
 
-Data window: 19 Dec 2021 to 28 Oct 2026 (the common window where all eight
-stocks have data). Prices are dividend-adjusted, so returns include dividends.
-All figures come from `sql/analysis.sql` run against the loaded database.
+Figures as of **29 Oct 2026**, covering 2 Jan 2022 to 29 Oct 2026 (the same
+period for every stock). All figures come from `sql/analysis.sql` run against
+the loaded database. Prices are dividend-adjusted, so returns include
+dividends.
 
-- **Best performer: Ma'aden (+130%)**, followed by ACWA Power (+101%). Every
+| Stock | Sector | Total return | Annual volatility | Max drawdown |
+|-------|--------|-------------:|------------------:|-------------:|
+| Ma'aden | Materials | +114.5% | 46.0% | -45.7% |
+| ACWA Power | Utilities | +85.3% | 41.1% | -71.6% |
+| stc | Telecom | +21.9% | 17.6% | -26.5% |
+| Al Rajhi Bank | Banks | +12.8% | 22.5% | -42.8% |
+| Saudi Aramco | Energy | +10.9% | 16.2% | -28.5% |
+| Almarai | Food & Beverages | -4.4% | 24.9% | -41.2% |
+| SNB | Banks | -7.1% | 24.8% | -47.9% |
+| SABIC | Materials | -49.5% | 21.3% | -61.3% |
+| **Average** | | **+23.1%** | | |
+
+- **Best performer: Ma'aden (+115%)**, followed by ACWA Power (+85%). Every
   other stock returned less than 25%, and three lost money. SABIC was the
-  weakest at **-48%** and had a negative return in every calendar year from
+  weakest at **-50%** and had a negative return in every calendar year from
   2022 to 2026.
 - **Risk comes with the return.** Ma'aden (46% annualised volatility) and ACWA
   Power (41%) are more than twice as volatile as Aramco (16%) and stc (18%).
-  ACWA Power rose 82%, 70% and 57% in 2022 to 2024, then fell 55% in 2025. Its
+  ACWA Power rose 80%, 70% and 57% in 2022 to 2024, then fell 55% in 2025. Its
   maximum drawdown was **-72%**.
-- **Sectors:** Utilities (+101%) and Materials (+41% on average) led, but the
-  Materials average hides a wide spread (Ma'aden +130% vs SABIC -48%). Banks
-  (+8%) and Food & Beverages (-2%) lagged. Telecom gave the best return per
+- **Sectors:** Utilities (+85%) and Materials (+33% on average) led, but the
+  Materials average hides a wide spread (Ma'aden +115% vs SABIC -50%). Banks
+  (+3%) and Food & Beverages (-4%) lagged. Telecom gave the best return per
   unit of risk after Utilities, with Energy the least volatile sector.
 - **Volume seasonality:** March to June trade well above each stock's normal
-  level. May is the busiest month (+32%), followed by March (+26%). July is the
-  quietest (-16%), which fits the summer holiday period.
+  level. May is the busiest month (+33%), followed by March (+27%). December
+  (-20%) and July (-16%) are the quietest, which fits the year-end and summer
+  holiday periods.
 - **Correlation:** daily returns are only loosely related (average pairwise
   correlation 0.27). The strongest pair is the two banks, Al Rajhi and SNB
   (0.55). Ma'aden and Almarai are almost uncorrelated (0.07). This mix of
@@ -223,15 +250,18 @@ RETURN IF ( NOT ISBLANK ( _Close ), DIVIDE ( _Close, _FirstClose ) - 1 )
 - **Bad volume data, Mar to Jun 2023.** For 7 of the 8 stocks (all except stc),
   Yahoo reports volumes about 1000x too small between 1 Mar and 18 Jun 2023,
   while prices are correct. The pipeline stores volume as `NULL` on any day
-  below 2% of that stock's full-period median volume (58 to 68 days per stock,
+  below 5% of that stock's full-period median volume (58 to 68 days per stock,
   all inside that window). Returns, volatility and correlation are unaffected.
   Volume averages skip these days, but monthly *totals* for those months are
-  understated.
+  understated. Power BI hides months with no data by default, so enable
+  "Show items with no data" on a month axis to see the gap.
+  - **Known exception:** ACWA Power on 8 Mar 2023 reports 27,312 shares, 9.2%
+    of its median. That is likely also bad data, but it sits above the
+    threshold and is kept. Raising the threshold to 10% would catch it, but it
+    would also flag 9 ordinary quiet days outside the bad window.
 - Yahoo returns some **zero-volume placeholder days** (all prices equal, volume
-  0) for Saudi tickers: about 30 to 50 per stock over five years. These are
+  0) for Saudi tickers: about 30 to 50 per stock since 2022. These are
   dropped instead of filled, so a few real trading days may be missing.
-- **ACWA Power data starts on 19 Dec 2021**, so its history is slightly shorter
-  than five years. Cross-stock comparisons use the common window.
 - The TASI index (`^TASI.SR`) only returns the latest day in yfinance, so the
   market benchmark is not included.
 - Volatility is historical standard deviation, which is a simple risk measure.

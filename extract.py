@@ -18,8 +18,8 @@ ADJUSTMENT_TOLERANCE = 0.001
 
 
 def full_start_date():
-    """Return the first date of the full history window (today minus PERIOD_YEARS)."""
-    return (pd.Timestamp.today().normalize() - pd.DateOffset(years=config.PERIOD_YEARS)).date()
+    """Return the fixed first date of the history (config.START_DATE)."""
+    return pd.Timestamp(config.START_DATE).date()
 
 
 def drop_unfinished_session(df):

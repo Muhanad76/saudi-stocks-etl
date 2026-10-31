@@ -130,7 +130,7 @@ saudi-stocks-etl/
 ├── data/raw/          # raw snapshots (git-ignored)
 ├── data/processed/    # cleaned output (git-ignored)
 ├── logs/              # pipeline.log (git-ignored)
-└── powerbi/           # dashboard .pbix + build guide
+└── powerbi/           # dashboard .pbix + screenshots
 ```
 
 ## How to run
@@ -157,7 +157,7 @@ saudi-stocks-etl/
    ```
 5. **Run the analysis**: open `sql/analysis.sql` in MySQL Workbench and run
    each query.
-6. **Open the dashboard**: `powerbi/` (see `powerbi/GUIDE.md` for how it is built).
+6. **Open the dashboard**: `powerbi/saudi_stocks_dashboard.pbix` in Power BI Desktop.
 
 ## Key insights
 
@@ -202,9 +202,7 @@ dividends.
 ## Dashboard
 
 Built in Power BI Desktop on an Import connection to the `saudi_stocks`
-database. The DAX measures and page layout are documented in
-[`powerbi/GUIDE.md`](powerbi/GUIDE.md); the report file is
-`powerbi/saudi_stocks_dashboard.pbix`.
+database. The report file is `powerbi/saudi_stocks_dashboard.pbix`.
 
 **Overview**: best/worst performer, average return, total volume, return by
 stock and a rebased return line chart.
@@ -227,9 +225,36 @@ SQL statement (Get Data > MySQL > Advanced options).
 
 ![Correlation](powerbi/screenshots/correlation.png)
 
-Notable measure: `Return Since Start %` rebases every stock to 0% at the start
-of the selected period. It returns blank on days a stock has no price, rather
-than -100%:
+### Key DAX measures
+
+The model has `companies` as the stock dimension and a DAX `Date` table
+(`CALENDAR` over the price dates). Both are related one-to-many to
+`daily_prices` and `daily_metrics`. Every measure responds to the date slicer
+and the stock/sector filters.
+
+**Period Return %**: return between the first and last close of the selected
+period. Unlike the stored `cumulative_return`, it follows the date slicer.
+
+```DAX
+Period Return % =
+VAR FirstDate = MIN ( daily_prices[date] )
+VAR LastDate  = MAX ( daily_prices[date] )
+VAR FirstClose = CALCULATE ( AVERAGE ( daily_prices[close] ), daily_prices[date] = FirstDate )
+VAR LastClose  = CALCULATE ( AVERAGE ( daily_prices[close] ), daily_prices[date] = LastDate )
+RETURN DIVIDE ( LastClose, FirstClose ) - 1
+```
+
+**Avg Stock Return %**: computes each stock's return separately, then
+averages them. Used for the sector comparison.
+
+```DAX
+Avg Stock Return % =
+AVERAGEX ( VALUES ( companies[ticker] ), [Period Return %] )
+```
+
+**Return Since Start %**: rebases every stock to 0% at the start of the
+selected period so stocks with very different prices share one chart. It
+returns blank on days a stock has no price, rather than -100%.
 
 ```DAX
 Return Since Start % =
@@ -239,6 +264,39 @@ VAR _FirstClose =
     CALCULATE ( AVERAGE ( daily_prices[close] ), ALLSELECTED ( 'Date' ), daily_prices[date] = _FirstDate )
 VAR _Close = AVERAGE ( daily_prices[close] )
 RETURN IF ( NOT ISBLANK ( _Close ), DIVIDE ( _Close, _FirstClose ) - 1 )
+```
+
+**Annual Volatility %**: standard deviation of daily returns, annualised with
+about 250 trading days a year.
+
+```DAX
+Annual Volatility % =
+STDEV.S ( daily_metrics[daily_return] ) * SQRT ( 250 )
+```
+
+**Max Drawdown %**: the largest fall from a previous peak within the selected
+period.
+
+```DAX
+Max Drawdown % =
+VAR Prices =
+    ADDCOLUMNS (
+        VALUES ( daily_prices[date] ),
+        "@close", CALCULATE ( AVERAGE ( daily_prices[close] ) ),
+        "@peak",
+            VAR d = daily_prices[date]
+            RETURN CALCULATE ( MAX ( daily_prices[close] ), daily_prices[date] <= d, ALLSELECTED ( daily_prices[date] ) )
+    )
+RETURN MINX ( Prices, DIVIDE ( [@close], [@peak] ) - 1 )
+```
+
+**Best Performer**: the stock with the highest `Period Return %` (Worst
+Performer is the same with `ASC`).
+
+```DAX
+Best Performer =
+VAR Top1 = TOPN ( 1, VALUES ( companies[name_en] ), [Period Return %], DESC )
+RETURN CONCATENATEX ( Top1, companies[name_en], ", " )
 ```
 
 ## Limitations

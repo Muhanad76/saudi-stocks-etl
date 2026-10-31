@@ -115,7 +115,7 @@ saudi-stocks-etl/
 ├── data/raw/          # النسخ الخام (مستبعدة من Git)
 ├── data/processed/    # البيانات المنظفة (مستبعدة من Git)
 ├── logs/              # pipeline.log (مستبعد من Git)
-└── powerbi/           # ملف الداشبورد .pbix + دليل البناء
+└── powerbi/           # ملف الداشبورد .pbix + الصور
 ```
 
 ## طريقة التشغيل
@@ -140,7 +140,7 @@ saudi-stocks-etl/
    python pipeline.py --skip-load  # سحب + تحويل بس (بدون قاعدة بيانات)
    ```
 5. **شغّل التحليل**: افتح `sql/analysis.sql` في MySQL Workbench وشغّل كل استعلام.
-6. **افتح الداشبورد**: مجلد `powerbi/`. طريقة بنائه في `powerbi/GUIDE.md`.
+6. **افتح الداشبورد**: ملف `powerbi/saudi_stocks_dashboard.pbix` في Power BI Desktop.
 
 ## أهم النتائج
 
@@ -166,7 +166,7 @@ saudi-stocks-etl/
 
 ## الداشبورد
 
-مبني في Power BI Desktop باتصال Import على قاعدة `saudi_stocks`. مقاييس DAX وتصميم الصفحات موثقة في [`powerbi/GUIDE.md`](powerbi/GUIDE.md)، وملف التقرير `powerbi/saudi_stocks_dashboard.pbix`.
+مبني في Power BI Desktop باتصال Import على قاعدة `saudi_stocks`. ملف التقرير `powerbi/saudi_stocks_dashboard.pbix`.
 
 **نظرة عامة**: الأفضل والأسوأ أداءً، متوسط العائد، إجمالي الحجم، العائد لكل سهم، ورسم خطي يقارن العوائد من نقطة بداية وحدة.
 
@@ -184,7 +184,29 @@ saudi-stocks-etl/
 
 ![الارتباط](powerbi/screenshots/correlation.png)
 
-مقياس مهم: `Return Since Start %` يخلي كل الأسهم تبدأ من 0% في بداية الفترة المختارة. وفي الأيام اللي ما فيها سعر للسهم يرجع فاضي بدل -100%:
+### أهم مقاييس DAX
+
+في النموذج جدول `companies` للأسهم، وجدول تواريخ `Date` مسوّى بـ DAX (`CALENDAR` على تواريخ الأسعار). الاثنين مربوطين بعلاقة واحد لمتعدد مع `daily_prices` و`daily_metrics`. كل المقاييس تتغير مع فلتر التاريخ وفلاتر الأسهم والقطاعات.
+
+**Period Return %**: العائد بين أول وآخر سعر إغلاق في الفترة المختارة. بعكس `cumulative_return` المخزن في القاعدة، هذا يتبع فلتر التاريخ.
+
+```DAX
+Period Return % =
+VAR FirstDate = MIN ( daily_prices[date] )
+VAR LastDate  = MAX ( daily_prices[date] )
+VAR FirstClose = CALCULATE ( AVERAGE ( daily_prices[close] ), daily_prices[date] = FirstDate )
+VAR LastClose  = CALCULATE ( AVERAGE ( daily_prices[close] ), daily_prices[date] = LastDate )
+RETURN DIVIDE ( LastClose, FirstClose ) - 1
+```
+
+**Avg Stock Return %**: يحسب عائد كل سهم لحاله، وبعدين ياخذ المتوسط. يستخدم في مقارنة القطاعات.
+
+```DAX
+Avg Stock Return % =
+AVERAGEX ( VALUES ( companies[ticker] ), [Period Return %] )
+```
+
+**Return Since Start %**: يخلي كل الأسهم تبدأ من 0% في بداية الفترة المختارة، عشان أسهم أسعارها مختلفة جداً تنعرض في رسم واحد. وفي الأيام اللي ما فيها سعر للسهم يرجع فاضي بدل -100%.
 
 ```DAX
 Return Since Start % =
@@ -194,6 +216,36 @@ VAR _FirstClose =
     CALCULATE ( AVERAGE ( daily_prices[close] ), ALLSELECTED ( 'Date' ), daily_prices[date] = _FirstDate )
 VAR _Close = AVERAGE ( daily_prices[close] )
 RETURN IF ( NOT ISBLANK ( _Close ), DIVIDE ( _Close, _FirstClose ) - 1 )
+```
+
+**Annual Volatility %**: الانحراف المعياري للعائد اليومي، محوّل لسنوي على أساس 250 يوم تداول تقريباً.
+
+```DAX
+Annual Volatility % =
+STDEV.S ( daily_metrics[daily_return] ) * SQRT ( 250 )
+```
+
+**Max Drawdown %**: أكبر نزول من قمة سابقة داخل الفترة المختارة.
+
+```DAX
+Max Drawdown % =
+VAR Prices =
+    ADDCOLUMNS (
+        VALUES ( daily_prices[date] ),
+        "@close", CALCULATE ( AVERAGE ( daily_prices[close] ) ),
+        "@peak",
+            VAR d = daily_prices[date]
+            RETURN CALCULATE ( MAX ( daily_prices[close] ), daily_prices[date] <= d, ALLSELECTED ( daily_prices[date] ) )
+    )
+RETURN MINX ( Prices, DIVIDE ( [@close], [@peak] ) - 1 )
+```
+
+**Best Performer**: السهم صاحب أعلى `Period Return %` (و Worst Performer نفسه بس بـ `ASC`).
+
+```DAX
+Best Performer =
+VAR Top1 = TOPN ( 1, VALUES ( companies[name_en] ), [Period Return %], DESC )
+RETURN CONCATENATEX ( Top1, companies[name_en], ", " )
 ```
 
 ## القيود
